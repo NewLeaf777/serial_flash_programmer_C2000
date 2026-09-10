@@ -176,11 +176,12 @@ int f021_SendPacket(uint8_t *packet, uint32_t length)
 #ifdef __linux__
 	unsigned char buf[8];
 	int readf;
-
+_tprintf(_T("\nWaiting for ACK/NAK from device..."));
 	buf[0] = 0;
 	dwRead = 0;
 	while (dwRead == 0)
 	{
+		_tprintf(_T("\nWaiting for ACK/NAK from device2..."));
 		readf = read(fd, &buf, 1);
 		if (readf == -1)
 		{

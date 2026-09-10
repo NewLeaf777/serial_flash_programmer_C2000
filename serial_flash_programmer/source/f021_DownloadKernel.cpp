@@ -296,11 +296,8 @@ int f021_DownloadKernel(wchar_t *kernel)
 	loadProgram(Kfh);
 
 	VERBOSEPRINT(_T("\nKernel loaded! Booting kernel..."));
-#ifdef __linux__
-	sleep(2);
-#else
+
 	Sleep(2000);
-#endif
 
 	VERBOSEPRINT(_T("\nDone waiting for kernel boot... "));
 	clearBuffer();

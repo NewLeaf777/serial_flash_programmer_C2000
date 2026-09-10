@@ -251,7 +251,8 @@ DCB port;
 #define COMMAND_ERROR 0x5000
 #define UNLOCK_ERROR 0x6000
 
-#define kernel
+// undefined kernel for Eversol-IIC
+// #define kernel
 
 //*****************************************************************************
 //
@@ -262,6 +263,7 @@ int _tmain(int argc, TCHAR *argv[])
 {
 	int iExitCode = 0;
 	int iRetCode = 0;
+// _tprintf(_T("This is Wprint (host)\n"));
 
 	//
 	// Parse the command line parameters, print the welcome banner and
@@ -286,7 +288,7 @@ int _tmain(int argc, TCHAR *argv[])
 	fd = open(portname, O_RDWR | O_NOCTTY);
 	if (fd == -1)
 	{
-		printf("error %d opening %s: %s", errno, portname, strerror(errno));
+		_tprintf(_T("error %d opening %s: %s"), errno, portname, strerror(errno));
 		ExitApp(1);
 	}
 
@@ -817,11 +819,9 @@ int _tmain(int argc, TCHAR *argv[])
 				packetLength = constructPacket(packet, (uint16_t)RUN_CPU1_BOOT_CPU2, 4, (uint8_t *)&branchAddress);
 				_tprintf(_T("\ncalling f021_SendPacket\n"));
 				iRetCode = f021_SendPacket(packet, packetLength); //-1 means NACK, 0 means ACK
-#ifdef __linux__
-				sleep(1);
-#else
+
 				Sleep(1000);
-#endif
+
 				//no acknowledge packet
 				//Send Kernel
 				_tprintf(_T("\ncalling f021_DownloadKernel CPU2 Kernel\n"));
@@ -853,11 +853,9 @@ int _tmain(int argc, TCHAR *argv[])
 				packetLength = constructPacket(packet, (uint16_t)RESET_CPU1_BOOT_CPU2, 0, NULL);
 				_tprintf(_T("\ncalling f021_SendPacket\n"));
 				iRetCode = f021_SendPacket(packet, packetLength); //-1 means NACK, 0 means ACK
-#ifdef __linux__
-				sleep(1);
-#else
+
 				Sleep(1000);
-#endif
+
 				//no acknowledge packet
 				//Send Kernel
 				_tprintf(_T("\ncalling f021_DownloadKernel CPU2 Kernel\n"));

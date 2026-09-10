@@ -24,7 +24,7 @@ typedef unsigned short WORD;
 #define wchar_t char
 #define fscanf_s fscanf
 #define _tmain main
-#define Sleep sleep
+#define Sleep(n) usleep((n) * 1000)
 #define GetTickCount get_tick_count
 
 inline DWORD get_tick_count()

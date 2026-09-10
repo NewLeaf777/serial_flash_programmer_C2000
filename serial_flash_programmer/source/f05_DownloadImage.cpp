@@ -205,11 +205,9 @@ int f05_DownloadImage(void)
   }
 
   VERBOSEPRINT(_T("\nKernel Loaded"));
-#ifdef __linux__
-  sleep(5);
-#else
+
   Sleep(5000);
-#endif
+
   VERBOSEPRINT(_T("\nDone Waiting for kernel boot...attempting autobaud"));
 #ifdef __linux__
   if (tcflush(fd, TCIOFLUSH) == 0)
