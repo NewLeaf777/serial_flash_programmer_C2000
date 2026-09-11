@@ -139,7 +139,7 @@ void loadProgram_checksum(FILE *fh)
 	//First 22 bytes are initialization data
 	for (int i = 0; i < 22; i++)
 	{
-		fileStatus = fscanf_s(fh, "%x", &sendData[0]);
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[0]);
 		//Send next char
 #ifdef __linux__
         write(fd, &sendData[0], 1);
@@ -210,8 +210,8 @@ void loadProgram_checksum(FILE *fh)
 	{
 		unsigned int blockSize;
 		//Read next block size (2 bytes) from hex2000 text file
-		fileStatus = fscanf_s(fh, "%x", &sendData[0]); //LSB
-		fileStatus = fscanf_s(fh, "%x", &sendData[1]); //MSB
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[0]); //LSB
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[1]); //MSB
 		blockSize = (sendData[1] << 8) | sendData[0];
 
 		//Send block size LSB
@@ -240,10 +240,10 @@ void loadProgram_checksum(FILE *fh)
 		}
 
 		//Read next destination address from hex2000 text file (4 bytes, 32 bits)
-		fileStatus = fscanf_s(fh, "%x", &sendData[0]); //MSW[23:16]
-		fileStatus = fscanf_s(fh, "%x", &sendData[1]); //MSW[31:24]
-		fileStatus = fscanf_s(fh, "%x", &sendData[2]); //LSW[7:0]
-		fileStatus = fscanf_s(fh, "%x", &sendData[3]); //LSW[15:8]
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[0]); //MSW[23:16]
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[1]); //MSW[31:24]
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[2]); //LSW[7:0]
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[3]); //LSW[15:8]
 		unsigned long destAddr = (sendData[1] << 24) | (sendData[0] << 16) |
 								 (sendData[3] << 8) | (sendData[2]);
 
@@ -348,7 +348,7 @@ void loadProgram_checksum(FILE *fh)
 			}
 
 			//send LSB of word data
-			fileStatus = fscanf_s(fh, "%x", &sendData[0]);
+			fileStatus = fscanf_s(fh, "%hhx", &sendData[0]);
 #ifdef __linux__
 			write(fd, &sendData[0], 1);
 #else
@@ -359,7 +359,7 @@ void loadProgram_checksum(FILE *fh)
 			bitRate += 8;
 
 			//send MSB of word data
-			fileStatus = fscanf_s(fh, "%x", &sendData[0]);
+			fileStatus = fscanf_s(fh, "%hhx", &sendData[0]);
 #ifdef __linux__
 			write(fd, &sendData[0], 1);
 #else

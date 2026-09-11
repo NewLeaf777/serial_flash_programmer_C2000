@@ -196,7 +196,7 @@ void loadProgram(FILE *fh)
 #endif
 
 	getc(fh);
-	fileStatus = fscanf_s(fh, "%x", &sendData[0]);
+	fileStatus = fscanf_s(fh, "%hhx", &sendData[0]);
 
 	float bitRate = 0;
 	DWORD millis = GetTickCount();
@@ -236,7 +236,7 @@ void loadProgram(FILE *fh)
 		}
 
 		//Read next char
-		fileStatus = fscanf_s(fh, "%x", &sendData[0]);
+		fileStatus = fscanf_s(fh, "%hhx", &sendData[0]);
 	}
 	millis = GetTickCount() - millis;
 	bitRate = bitRate / millis * 1000 * 8;
