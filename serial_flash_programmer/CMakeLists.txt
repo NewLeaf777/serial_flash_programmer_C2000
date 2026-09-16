@@ -200,3 +200,30 @@ if(MSVC)
     )
 endif()
 
+################################################################################
+# iic_ota library (additive -- does not affect serial_flash_programmer)
+################################################################################
+option(BUILD_IIC_OTA_LIB "Build the iic_ota library" ON)
+option(IIC_OTA_SHARED "Build iic_ota as a shared library instead of static" OFF)
+
+if(BUILD_IIC_OTA_LIB)
+    if(IIC_OTA_SHARED)
+        set(IIC_OTA_LIB_TYPE SHARED)
+    else()
+        set(IIC_OTA_LIB_TYPE STATIC)
+    endif()
+
+    add_library(iic_ota ${IIC_OTA_LIB_TYPE}
+        "source/iic_ota.cpp"
+        "include/iic_ota.h"
+    )
+
+    target_include_directories(iic_ota PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+
+    set_target_properties(iic_ota PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
