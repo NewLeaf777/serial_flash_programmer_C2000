@@ -42,7 +42,10 @@ Command-line usage:
 import argparse
 import ctypes
 import os
+import select
 import sys
+import termios
+import time
 
 #*****************************************************************************
 # f28379_target_t -- must match include/iic_ota.h
@@ -213,6 +216,144 @@ def iic_ota_f280049(bank0_firmware_file, bank1_firmware_file, serial_port, baudr
         raise IicOtaError(rc)
 
 
+LIVE_UPDATE_TRIGGER_PACKET = bytes.fromhex("68 06 00 06 00 68 43 00 c2 49 00 4e 16")
+LIVE_UPDATE_TRIGGER_ACK = bytes.fromhex("68 06 00 06 00 68 93 01 D1 C2 00 27 16")
+
+RETRIEVE_FIRMWARE_VERSION_PACKET = bytes.fromhex("68 04 00 04 00 68 43 00 c1 04 16")
+RETRIEVE_FIRMWARE_VERSION_PACKET_RESPONSE = bytes.fromhex("68 10 00 10 00 68 83 01 c1 01 00 00 00 02 00 00 00 00 00 00 00 48 16")
+
+_TERMIOS_BAUDS = {
+    300: termios.B300,
+    600: termios.B600,
+    1200: termios.B1200,
+    1800: termios.B1800,
+    2400: termios.B2400,
+    4800: termios.B4800,
+    9600: termios.B9600,
+    19200: termios.B19200,
+    38400: termios.B38400,
+    57600: termios.B57600,
+    115200: termios.B115200,
+}
+
+def retrieve_firmware_version(serial_port, baudrate, timeout=3.0):
+    """
+    Sends RETRIEVE_FIRMWARE_VERSION_PACKET to the DSP and waits for its reply.
+
+    Returns the reply as bytes if successful, or False on failure.
+    """
+    speed = _TERMIOS_BAUDS.get(baudrate)
+    if speed is None:
+        return False
+
+    try:
+        fd = os.open(serial_port, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = termios.IGNPAR  # iflag
+        attrs[1] = 0  # oflag
+        attrs[2] = termios.CS8 | termios.CLOCAL | termios.CREAD  # cflag
+        attrs[3] = 0  # lflag
+        attrs[4] = speed  # ispeed
+        attrs[5] = speed  # ospeed
+        attrs[6][termios.VMIN] = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        termios.tcflush(fd, termios.TCIOFLUSH)
+
+        os.write(fd, RETRIEVE_FIRMWARE_VERSION_PACKET)
+
+        print("Waiting for firmware version from device...")
+
+        reply = b""
+        deadline = time.monotonic() + timeout
+        while len(reply) < len(RETRIEVE_FIRMWARE_VERSION_PACKET_RESPONSE):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                break
+            chunk = os.read(fd, len(RETRIEVE_FIRMWARE_VERSION_PACKET_RESPONSE) - len(reply))
+            if not chunk:
+                break
+            reply += chunk
+
+        print("Received %d bytes: %s" % (len(reply), reply.hex()))
+        return reply
+    except (OSError, termios.error):
+        print("Error sending RETRIEVE_FIRMWARE_VERSION_PACKET or reading reply", file=sys.stderr)
+        return False
+    finally:
+        os.close(fd)
+
+def send_live_update_trigger(serial_port, baudrate, timeout=3.0):
+    """
+    Sends LIVE_UPDATE_TRIGGER_PACKET to make the DSP enter live update mode
+    and waits for its reply.
+
+    Returns True only if the reply is exactly LIVE_UPDATE_TRIGGER_ACK.
+    Returns False for a NACK, any other/short reply, a timeout, an
+    unsupported baud rate, or a serial port that can't be opened/configured.
+
+    Params:
+        serial_port: POSIX device path, e.g. "/dev/ttyUSB0".
+        baudrate:    300/600/1200/1800/2400/4800/9600/19200/38400/57600/115200.
+        timeout:     seconds to wait for the full reply (default 1.0).
+    """
+    speed = _TERMIOS_BAUDS.get(baudrate)
+    if speed is None:
+        return False
+
+    try:
+        fd = os.open(serial_port, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = termios.IGNPAR  # iflag
+        attrs[1] = 0  # oflag
+        attrs[2] = termios.CS8 | termios.CLOCAL | termios.CREAD  # cflag
+        attrs[3] = 0  # lflag
+        attrs[4] = speed  # ispeed
+        attrs[5] = speed  # ospeed
+        attrs[6][termios.VMIN] = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        termios.tcflush(fd, termios.TCIOFLUSH)
+
+        os.write(fd, LIVE_UPDATE_TRIGGER_PACKET)
+
+        print("Waiting for LIVE_UPDATE_TRIGGER_ACK from device...")
+
+        reply = b""
+        deadline = time.monotonic() + timeout
+        while len(reply) < len(LIVE_UPDATE_TRIGGER_ACK):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                break
+            chunk = os.read(fd, len(LIVE_UPDATE_TRIGGER_ACK) - len(reply))
+            if not chunk:
+                break
+            reply += chunk
+        
+        print("Received %d bytes: %s" % (len(reply), reply.hex()))
+
+        return reply == LIVE_UPDATE_TRIGGER_ACK
+    except (OSError, termios.error):
+        print("Error sending LIVE_UPDATE_TRIGGER_PACKET or reading reply", file=sys.stderr)
+        return False
+    finally:
+        os.close(fd)
+
+
 _CLI_TARGETS = {
     "f280049": "f280049",
     "f28379_cpu1": F28379_CPU1,
@@ -235,6 +376,11 @@ def main(argv=None):
     target = _CLI_TARGETS[args.target]
 
     if target == "f280049":
+
+        retrieve_firmware_version(args.port, 115200)
+        send_live_update_trigger(args.port, 115200)
+        time.sleep(0.01)  # give the device a moment to switch to live update mode
+
         if not args.bank0_file or not args.bank1_file:
             parser.error("--target f280049 requires --bank0-file and --bank1-file")
         print("iic_ota_f280049: bank0_file=%s bank1_file=%s port=%s baud=%d" %

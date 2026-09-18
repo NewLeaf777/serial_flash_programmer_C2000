@@ -206,29 +206,30 @@ python3 serial_flash_programmer/python/iic_ota.py \
 
 Defined in `include/iic_ota.h` (and mirrored in `python/iic_ota.py`):
 
-| Code | Name                              | Meaning |
-|------|-----------------------------------|---------|
-| `0`   | `IIC_OTA_SUCCESS`                 | image sent and ACKed successfully |
-| `-1`  | `IIC_OTA_ERR_INVALID_ARG`         | bad target, or a NULL/empty file or port path |
-| `-2`  | `IIC_OTA_ERR_UNSUPPORTED_BAUD`    | `baudrate` isn't one of the supported values |
-| `-3`  | `IIC_OTA_ERR_FILE_OPEN`           | could not open `firmware_file` for reading |
-| `-4`  | `IIC_OTA_ERR_PORT_OPEN`           | could not open `serial_port` |
-| `-5`  | `IIC_OTA_ERR_PORT_CONFIG`         | `tcsetattr`/`tcgetattr` on the serial port failed |
-| `-6`  | `IIC_OTA_ERR_AUTOBAUD_TIMEOUT`    | no, or a garbled, echo to the autobaud byte |
-| `-7`  | `IIC_OTA_ERR_COMMAND_NAK`         | device NAKed the Live DFU command packet |
-| `-8`  | `IIC_OTA_ERR_COMMAND_TIMEOUT`     | no ACK/NAK reply to the command within the timeout |
-| `-9`  | `IIC_OTA_ERR_IMAGE_FORMAT`        | `firmware_file` isn't valid SCI-8 boot format |
-| `-10` | `IIC_OTA_ERR_IMAGE_TRANSFER`      | checksum mismatch or timeout during image transfer |
-| `-11` | `IIC_OTA_ERR_BANK_SELECT`         | device's bank-select readback bytes were mismatched or unrecognized (`iic_ota_f280049()` only) |
+| Code | Name                              | Meaning | Upper Layer Action Recommended |
+|------|-----------------------------------|---------|---------------------------------| 
+| `0`   | `IIC_OTA_SUCCESS`                 | image sent and ACKed successfully | retrieve firmware version to confirm,and then reinitialize communication session to the IIC |
+| `-1`  | `IIC_OTA_ERR_INVALID_ARG`         | bad target, or a NULL/empty file or port path | check arguments. Nothing has changed on the DSP side. |
+| `-2`  | `IIC_OTA_ERR_UNSUPPORTED_BAUD`    | `baudrate` isn't one of the supported values | check arguments. Nothing has changed on the DSP side. |
+| `-3`  | `IIC_OTA_ERR_FILE_OPEN`           | could not open `firmware_file` for reading |check file path or permission. Nothing has changed on the DSP side. |
+| `-4`  | `IIC_OTA_ERR_PORT_OPEN`           | could not open `serial_port` | check port or permission. Nothing has changed on the DSP side. |
+| `-5`  | `IIC_OTA_ERR_PORT_CONFIG`         | `tcsetattr`/`tcgetattr` on the serial port failed | fix configuration. Nothing has changed on the DSP side. |
+| `-6`  | `IIC_OTA_ERR_AUTOBAUD_TIMEOUT`    | no, or a garbled, echo to the autobaud byte | retry by calling ota_iic_f280049/f28379(). Nothing has changed on the DSP side yet. |
+| `-7`  | `IIC_OTA_ERR_COMMAND_NAK`         | device NAKed the Live DFU command packet | retriger dsp entering live update mode by sending 0xC2 command, then re-call ota_iic_f280049/f28379()|
+| `-8`  | `IIC_OTA_ERR_COMMAND_TIMEOUT`     | no ACK/NAK reply to the command within the timeout | wait for 10 seconds, then re-call ota_iic_f280049/f28379() |
+| `-9`  | `IIC_OTA_ERR_IMAGE_FORMAT`        | `firmware_file` isn't valid SCI-8 boot format | replace firmware_file. wait for at least 7 seconds->retriger LFU mode->re-call ota_iic_f280049/f28379() |
+| `-10` | `IIC_OTA_ERR_IMAGE_TRANSFER`      | checksum mismatch or timeout during image transfer | wait for at least 7 seconds->retriger LFU mode->re-call ota_iic_f280049/f28379() |
+| `-11` | `IIC_OTA_ERR_BANK_SELECT`         | device's bank-select readback bytes were mismatched or unrecognized (`iic_ota_f280049()` only) | wait for at least 7 seconds->retriger LFU mode->re-call ota_iic_f280049/f28379() |
 
 In C, check the return value directly. In Python, a non-success return raises
 `IicOtaError`, whose `.code` attribute holds the value above.
 
-## Testing without hardware
+## Upper Layer Design Consideration
 
-There's no unit-test target checked into the build. If you need to exercise this
-without a real device, the protocol is simple enough to fake over a Linux PTY pair
-(`os.openpty()`): echo the autobaud byte, ACK the 10-byte command packet, then reply
-to each checksum handshake with the running sum of bytes actually received so far
-(see `source/iic_ota.cpp`'s `download_image_checksum()` for the exact block/checkpoint
-framing to replicate on the fake-device side).
+1. The live update process must start by calling `iic_ota_f28xxx()` within 10 seconds after switching to firmware update mode. Otherwise, the DSP will return to normal mode. A `0xC2` command is required to re-trigger the DSP to enter live update mode.
+
+2. Refer to 'Return/Error codes" section for handling errors.
+
+
+
+
