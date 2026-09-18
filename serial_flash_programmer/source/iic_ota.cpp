@@ -41,13 +41,25 @@ namespace
 	const uint8_t kAck = 0x2D;
 	const uint8_t kNak = 0xA5;
 
+	// F280049 Live DFU bank-select readback (see read_bank_select() below).
+	const uint8_t kBankSelect0 = 0xB0;
+	const uint8_t kBankSelect1 = 0xB1;
+
+	// PROPOSED / UNVERIFIED: the existing LIVE_DFU_CPU1 command already used
+	// by serial_flash_programmer.cpp's case-8 Live DFU for F280049-class
+	// (single-core) devices -- reused here unchanged to preserve today's
+	// working behavior. The device, not this command value, now decides
+	// which bank gets written (see read_bank_select() below).
+	const uint16_t kF280049LiveDfuCommand = 0x0700;
+
 	// Matches g_bBlockSize in source/f021_DownloadImage.cpp -- number of
 	// 16-bit words transmitted between device-checksum handshakes.
 	const unsigned int kBlockSizeWords = 0x80;
 
 	// Host-side patience. These are new values -- not part of the wire
 	// protocol -- chosen to be generous for low-baud SCI transfers while
-	// still guaranteeing iic_ota() eventually returns.
+	// still guaranteeing iic_ota_f28379()/iic_ota_f280049() eventually
+	// return.
 	const int kAutobaudTimeoutMs = 3000;
 	const int kCommandAckTimeoutMs = 3000;
 	const int kByteTimeoutMs = 5000;
@@ -55,26 +67,15 @@ namespace
 	//*************************************************************************
 	// Target -> wire command mapping.
 	//
-	// PROPOSED / UNVERIFIED: 0x0700 is the existing LIVE_DFU_CPU1 command
-	// already used by serial_flash_programmer.cpp's case-8 Live DFU for
-	// F280049-class (single-core) devices -- reused here unchanged for
-	// F280049_BANK0 to preserve today's working behavior. The other three
-	// values are new proposals following this codebase's existing command
-	// numbering conventions (DFU_CPU1/DFU_CPU2 = +0x0100 per role;
-	// CPU1_UNLOCK_Z1/Z2 = adjacent low-order value for a same-role variant)
-	// and MUST be confirmed against (or replaced with) whatever the actual
-	// device kernel firmware expects before use against real hardware.
+	// PROPOSED / UNVERIFIED: these follow this codebase's existing command
+	// numbering conventions (DFU_CPU1/DFU_CPU2 = +0x0100 per role) and MUST
+	// be confirmed against (or replaced with) whatever the actual device
+	// kernel firmware expects before use against real hardware.
 	//*************************************************************************
-	bool wire_command_for(firmware_type_t type, uint16_t *command)
+	bool wire_command_for(f28379_target_t target, uint16_t *command)
 	{
-		switch (type)
+		switch (target)
 		{
-		case F280049_BANK0:
-			*command = 0x0700; // == existing LIVE_DFU_CPU1
-			return true;
-		case F280049_BANK1:
-			*command = 0x0701;
-			return true;
 		case F28379_CPU1:
 			*command = 0x0710;
 			return true;
@@ -225,8 +226,8 @@ namespace
 	//*************************************************************************
 	// Reentrant reimplementation of constructPacket()
 	// (source/f021_SendMessage.cpp:120-146). Byte-identical output for the
-	// same inputs. All iic_ota() commands use length=0/data=NULL, exactly
-	// as case 8 (Live DFU) does today.
+	// same inputs. All iic_ota_f28379()/iic_ota_f280049() commands use
+	// length=0/data=NULL, exactly as case 8 (Live DFU) does today.
 	//*************************************************************************
 	uint32_t construct_packet(uint8_t *packet, uint16_t command, uint16_t length, const uint8_t *data)
 	{
@@ -298,10 +299,40 @@ namespace
 		}
 		if (reply == kAck)
 		{
-			flush_port(fd);
+			// flush_port(fd);
 			return 0;
 		}
 		*nak = true;
+		return 0;
+	}
+
+	//*************************************************************************
+	// Reads the 2-byte bank-select readback the device sends immediately
+	// after ACKing the F280049 Live DFU command: 0xB0 0xB0 selects bank 0,
+	// 0xB1 0xB1 selects bank 1.
+	//
+	// Returns 0 if both bytes were received (check *invalid for whether they
+	// form a recognized bank-select pattern), -1 on timeout waiting for
+	// either byte.
+	//*************************************************************************
+	int read_bank_select(int fd, int timeout_ms, uint8_t *bank, bool *invalid)
+	{
+		*invalid = false;
+		uint8_t b0, b1;
+		if (read_byte_timeout(fd, &b0, timeout_ms) != 0)
+		{
+			return -1;
+		}
+		if (read_byte_timeout(fd, &b1, timeout_ms) != 0)
+		{
+			return -1;
+		}
+		if (b0 != b1 || (b0 != kBankSelect0 && b0 != kBankSelect1))
+		{
+			*invalid = true;
+			return 0;
+		}
+		*bank = b0;
 		return 0;
 	}
 
@@ -502,10 +533,10 @@ namespace
 
 } // namespace
 
-int iic_ota(firmware_type_t type, const char *firmware_file, const char *serial_port, int baudrate)
+int iic_ota_f28379(f28379_target_t target, const char *firmware_file, const char *serial_port, int baudrate)
 {
 	uint16_t command;
-	if (!wire_command_for(type, &command))
+	if (!wire_command_for(target, &command))
 	{
 		return IIC_OTA_ERR_INVALID_ARG;
 	}
@@ -577,6 +608,127 @@ int iic_ota(firmware_type_t type, const char *firmware_file, const char *serial_
 	// Matches the Sleep(500) preceding f021_DownloadImage() in case 8.
 	usleep(500 * 1000);
 
+	flush_port(fd);
+	
+	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
+
+	flush_port(fd);
+	fclose(fh);
+	close(fd);
+
+	return result;
+}
+
+int iic_ota_f280049(const char *bank0_firmware_file, const char *bank1_firmware_file,
+					 const char *serial_port, int baudrate)
+{
+	// Single generic F280049 trigger -- the device, not this command value,
+	// now decides which bank gets written (see read_bank_select() below).
+	const uint16_t command = kF280049LiveDfuCommand;
+
+	if (!bank0_firmware_file || !bank0_firmware_file[0] ||
+		!bank1_firmware_file || !bank1_firmware_file[0] ||
+		!serial_port || !serial_port[0])
+	{
+		return IIC_OTA_ERR_INVALID_ARG;
+	}
+
+	speed_t speed;
+	if (!lookup_baud(baudrate, &speed))
+	{
+		return IIC_OTA_ERR_UNSUPPORTED_BAUD;
+	}
+
+	FILE *fh0 = fopen(bank0_firmware_file, "rb");
+	if (!fh0)
+	{
+		return IIC_OTA_ERR_FILE_OPEN;
+	}
+	FILE *fh1 = fopen(bank1_firmware_file, "rb");
+	if (!fh1)
+	{
+		fclose(fh0);
+		return IIC_OTA_ERR_FILE_OPEN;
+	}
+
+	int fd = open(serial_port, O_RDWR | O_NOCTTY);
+	if (fd < 0)
+	{
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_PORT_OPEN;
+	}
+
+	if (configure_port(fd, speed) != 0)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_PORT_CONFIG;
+	}
+
+	// Matches the Sleep(6) immediately preceding autobaudLock() in
+	// serial_flash_programmer.cpp's _tmain(), for both the dual-core and
+	// single-core device branches.
+	flush_port(fd);
+	usleep(6 * 1000);
+
+	if (autobaud_lock(fd, kAutobaudTimeoutMs) != 0)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_AUTOBAUD_TIMEOUT;
+	}
+
+	// Live DFU command packet -- always length=0/data=NULL, matching case 8.
+	uint8_t packet[16];
+	uint32_t packetLength = construct_packet(packet, command, 0, NULL);
+
+	// Matches the Sleep(500) preceding f021_SendPacket() in case 8.
+	usleep(500 * 1000);
+
+	bool nak = false;
+	if (send_packet_and_wait_ack(fd, packet, packetLength, kCommandAckTimeoutMs, &nak) != 0)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_COMMAND_TIMEOUT;
+	}
+	if (nak)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_COMMAND_NAK;
+	}
+
+	uint8_t bank;
+	bool invalidBank = false;
+	if (read_bank_select(fd, kCommandAckTimeoutMs, &bank, &invalidBank) != 0)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_COMMAND_TIMEOUT;
+	}
+
+	if (invalidBank)
+	{
+		close(fd);
+		fclose(fh0);
+		fclose(fh1);
+		return IIC_OTA_ERR_BANK_SELECT;
+	}
+
+	FILE *fh = (bank == kBankSelect0) ? fh0 : fh1;
+	fclose(bank == kBankSelect0 ? fh1 : fh0);
+
+	// Matches the Sleep(500) preceding f021_DownloadImage() in case 8.
+	usleep(500 * 1000);
+
+	flush_port(fd);
 	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
 
 	flush_port(fd);
