@@ -30,18 +30,11 @@ the full API doc comments and `source/iic_ota.cpp` for the implementation.
   device before calling either function — neither one downloads a kernel, and
   `iic_ota_f28379(F28379_CPU2, ...)` does **not** perform any CPU1→CPU2 SCI hand-off.
 - Linux only (POSIX `termios`). Not built or tested on Windows.
-- Supported baud rates: 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600,
-  115200. Anything else is rejected before any I/O happens.
+- Supported baud rates: fixed at 38400 as DSP operating at this speed. This library supports 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600,
+  115200 for future extension. Anything else is rejected before any I/O happens.
 - `firmware_file` (and `bank0_firmware_file`/`bank1_firmware_file`) must be ASCII
   SCI-8 boot format, i.e. the output of `hex2000 -boot -a -sci8 app.out -o app.txt`.
-- **The wire command codes are proposals, not verified protocol.** Only the command
-  `iic_ota_f280049()` sends (`0x0700`, matching the existing `LIVE_DFU_CPU1` code) is
-  what the existing, already-working CLI sends today. The `f28379_target_t` mappings
-  in `wire_command_for()` (`source/iic_ota.cpp`) are new proposals and must be
-  confirmed against (or replaced with) whatever the actual device kernel firmware
-  expects before this is used against real hardware. The `0xB0 0xB0` / `0xB1 0xB1`
-  bank-select readback `iic_ota_f280049()` expects after its command ACK is likewise
-  unverified against real device firmware.
+
 
 ## Building
 
@@ -57,7 +50,7 @@ make iic_ota
 
 This produces a **static** library, `build/libiic_ota.a`, by default.
 
-### Shared library (required for the Python wrapper)
+### Shared library (required for the Python wrapper) for Ubuntu
 
 ```bash
 cmake -DIIC_OTA_SHARED=ON ..
@@ -66,7 +59,7 @@ make iic_ota
 
 Produces `build/libiic_ota.so` instead.
 
-### Skipping the library entirely
+### Skipping the library entirely for Ubuntu
 
 ```bash
 cmake -DBUILD_IIC_OTA_LIB=OFF ..
@@ -74,6 +67,70 @@ cmake -DBUILD_IIC_OTA_LIB=OFF ..
 
 No `iic_ota`/`libiic_ota.*` target is built at all; `serial_flash_programmer` is
 unaffected.
+
+### Cross-compiling for TI AM62x (aarch64) with `Makefile.am62x`
+
+`Makefile.am62x` builds only the `iic_ota` library for aarch64 targets such as the TI AM62x. It is
+plain Make and does not use CMake.
+
+```bash
+cd serial_flash_programmer
+make -f Makefile.am62x            # builds both libraries
+make -f Makefile.am62x static     # only build-am62x/libiic_ota.a
+make -f Makefile.am62x shared     # only build-am62x/libiic_ota.so
+make -f Makefile.am62x clean
+```
+
+Requires `aarch64-linux-gnu-g++` and `aarch64-linux-gnu-ar` on `$PATH` (Ubuntu:
+`apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu`). Output goes to `build-am62x/`. Check it
+with `file build-am62x/libiic_ota.so` (expect `ELF 64-bit ... ARM aarch64`).
+
+To use a different toolchain, override the variables on the command line (or in the environment):
+
+```bash
+make -f Makefile.am62x CXX=aarch64-none-linux-gnu-g++ AR=aarch64-none-linux-gnu-ar
+```
+
+`CXXFLAGS` (default `-std=c++11 -O2 -Wall -Wextra -fPIC`) and `BUILD_DIR` can be overridden the
+same way.
+
+**glibc compatibility:** a library built with Ubuntu's cross toolchain links against Ubuntu's glibc.
+Current Ubuntu releases pull in `__isoc23_fscanf@GLIBC_2.38` (from the `fscanf` in `source/iic_ota.cpp`),
+so the `.so` will not load on a board with an older glibc (for example a kirkstone-based image, glibc
+2.35). Check the requirement with
+`aarch64-linux-gnu-objdump -T build-am62x/libiic_ota.so | grep GLIBC_` and compare it with
+`ldd --version` on the board. If the board is older, build with the Yocto recipe below instead, which
+compiles against the image's own libraries.
+
+### Building with Yocto (`yocto/iic-ota_git.bb`)
+
+`yocto/iic-ota_git.bb` is a BitBake recipe that builds `iic_ota` with the Yocto cross toolchain by
+running `Makefile.am62x`. It installs `libiic_ota.so` and `libiic_ota.a` into `${libdir}` and
+`iic_ota.h` into `${includedir}`. The `.so` goes in the main package (not `-dev`) so it can be loaded
+by name, for example by the Python `ctypes` wrapper.
+
+1. Copy the recipe into a layer of your own, for example
+   `meta-yourlayer/recipes-support/iic-ota/iic-ota_git.bb`.
+2. The recipe fetches this repository from GitHub, so `serial_flash_programmer/Makefile.am62x` must be
+   pushed to the `master` branch first. For reproducible builds, replace `SRCREV = "${AUTOREV}"` with
+   a specific commit hash.
+3. Build it:
+   ```bash
+   bitbake iic-ota
+   ```
+4. Add it to your image, for example in `conf/local.conf`:
+   ```
+   IMAGE_INSTALL:append = " iic-ota"
+   ```
+   Add `iic-ota-dev` and `iic-ota-staticdev` too if you want the header and static library in the
+   image or SDK.
+
+To test the recipe against a local checkout instead of GitHub, use `devtool modify iic-ota` or
+override `SRC_URI` with a `file://` or `git://` URL of your own.
+
+The recipe has not been run through BitBake yet. If `bitbake iic-ota` fails, the error text will show
+what to adjust (the likeliest spots are the `LIC_FILES_CHKSUM` line and the `SRCPV` variable, which
+newer Yocto releases deprecate).
 
 ## C usage
 
@@ -105,7 +162,7 @@ For the F280049 device-picks-the-bank case:
 
 int main(void)
 {
-    int rc = iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 9600);
+    int rc = iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 38400);
     if (rc != IIC_OTA_SUCCESS)
     {
         fprintf(stderr, "update failed, code %d\n", rc);

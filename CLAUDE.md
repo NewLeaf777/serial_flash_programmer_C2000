@@ -25,6 +25,24 @@ Produces `serial_flash_programmer/build/serial_flash_programmer`. The same `CMak
 Visual Studio 2017 build on Windows (`serial_flash_programmer.sln` / MSBuild `/property:Configuration=Release`);
 `.vscode/tasks.json` wires both up as `cmake` and `make` tasks.
 
+### AM62x (aarch64) cross-compile of iic_ota
+
+`iic_ota` (the standalone Live DFU library, see `README_iic_ota.md`) can be cross-compiled for TI
+AM62x targets independently of the main CMake build, using a plain Makefile:
+
+```bash
+cd serial_flash_programmer
+make -f Makefile.am62x
+```
+
+Requires `aarch64-linux-gnu-gcc`/`aarch64-linux-gnu-g++` on `$PATH` (Ubuntu:
+`apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu`). Produces `build-am62x/libiic_ota.a` and
+`build-am62x/libiic_ota.so`. This does **not** cross-compile the `serial_flash_programmer` CLI itself
+-- only `iic_ota` -- and is entirely separate from the CMake `build/` tree (different directory,
+different tool, not wired into `CMakeLists.txt`). Override `CXX`/`AR`/`CXXFLAGS` on the command line
+to point at a different aarch64 toolchain. Confirm the result with `file build-am62x/libiic_ota.so`
+(expect `ELF ... ARM aarch64`).
+
 ## Running it
 
 ```bash
