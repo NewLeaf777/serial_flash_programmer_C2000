@@ -612,6 +612,9 @@ int iic_ota_f28379(f28379_target_t target, const char *firmware_file, const char
 	
 	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
 
+	//Wait for the last two bytes to go out on the wire.
+	usleep(1 * 1000);
+
 	flush_port(fd);
 	fclose(fh);
 	close(fd);
@@ -730,6 +733,9 @@ int iic_ota_f280049(const char *bank0_firmware_file, const char *bank1_firmware_
 
 	flush_port(fd);
 	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
+	
+	//Wait for the last two bytes to go out on the wire.
+	usleep(1 * 1000);
 
 	flush_port(fd);
 	fclose(fh);

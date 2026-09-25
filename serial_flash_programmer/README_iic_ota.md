@@ -30,7 +30,7 @@ the full API doc comments and `source/iic_ota.cpp` for the implementation.
   device before calling either function — neither one downloads a kernel, and
   `iic_ota_f28379(F28379_CPU2, ...)` does **not** perform any CPU1→CPU2 SCI hand-off.
 - Linux only (POSIX `termios`). Not built or tested on Windows.
-- Supported baud rates: fixed at 38400 as DSP operating at this speed. This library supports 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600,
+- Supported baud rates: fixed at 115200 as DSP operating at this speed. This library supports 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600,
   115200 for future extension. Anything else is rejected before any I/O happens.
 - `firmware_file` (and `bank0_firmware_file`/`bank1_firmware_file`) must be ASCII
   SCI-8 boot format, i.e. the output of `hex2000 -boot -a -sci8 app.out -o app.txt`.
@@ -140,7 +140,7 @@ newer Yocto releases deprecate).
 
 int main(void)
 {
-    int rc = iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 9600);
+    int rc = iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 115200);
     if (rc != IIC_OTA_SUCCESS)
     {
         fprintf(stderr, "update failed, code %d\n", rc);
@@ -162,7 +162,7 @@ For the F280049 device-picks-the-bank case:
 
 int main(void)
 {
-    int rc = iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 38400);
+    int rc = iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 115200);
     if (rc != IIC_OTA_SUCCESS)
     {
         fprintf(stderr, "update failed, code %d\n", rc);
@@ -214,7 +214,7 @@ sys.path.insert(0, "serial_flash_programmer/python")
 from iic_ota import iic_ota_f28379, F28379_CPU1, IicOtaError
 
 try:
-    iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 9600)
+    iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 115200)
     print("update succeeded")
 except IicOtaError as e:
     print("update failed:", e, "(code", e.code, ")")
@@ -224,7 +224,7 @@ except IicOtaError as e:
 `../build/`. If it's somewhere else, pass it explicitly:
 
 ```python
-iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 9600,
+iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 115200,
                 library_path="/path/to/libiic_ota.so")
 ```
 
@@ -234,7 +234,7 @@ For the F280049 device-picks-the-bank case, use `iic_ota_f280049()` instead:
 from iic_ota import iic_ota_f280049, IicOtaError
 
 try:
-    iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 9600)
+    iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 115200)
     print("update succeeded")
 except IicOtaError as e:
     print("update failed:", e, "(code", e.code, ")")
@@ -244,7 +244,7 @@ except IicOtaError as e:
 
 ```bash
 python3 serial_flash_programmer/python/iic_ota.py \
-    --target f28379_cpu1 --file blinky.txt --port /dev/ttyUSB0 --baud 9600 \
+    --target f28379_cpu1 --file blinky.txt --port /dev/ttyUSB0 --baud 115200 \
     [--lib /path/to/libiic_ota.so]
 ```
 
@@ -256,7 +256,7 @@ calls `iic_ota_f280049()` (the device picks the bank) and requires `--bank0-file
 ```bash
 python3 serial_flash_programmer/python/iic_ota.py \
     -t f280049 --bank0-file bank0.txt --bank1-file bank1.txt \
-    --port /dev/ttyUSB0 --baud 9600 [--lib /path/to/libiic_ota.so]
+    --port /dev/ttyUSB0 --baud 115200 [--lib /path/to/libiic_ota.so]
 ```
 
 ## Return / error codes

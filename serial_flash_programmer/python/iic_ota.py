@@ -16,7 +16,7 @@ Library usage:
     from iic_ota import iic_ota_f28379, F28379_CPU1, IicOtaError
 
     try:
-        iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 9600)
+        iic_ota_f28379(F28379_CPU1, "blinky.txt", "/dev/ttyUSB0", 115200)
     except IicOtaError as e:
         print("update failed:", e)
 
@@ -24,17 +24,17 @@ Library usage:
     from iic_ota import iic_ota_f280049, IicOtaError
 
     try:
-        iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 9600)
+        iic_ota_f280049("bank0.txt", "bank1.txt", "/dev/ttyUSB0", 115200)
     except IicOtaError as e:
         print("update failed:", e)
 
 Command-line usage:
 
     python3 iic_ota.py --target f28379_cpu1 --file blinky.txt \
-        --port /dev/ttyUSB0 --baud 9600
+        --port /dev/ttyUSB0 --baud 115200
 
     python3 iic_ota.py -t f280049 --bank0-file bank0.txt --bank1-file bank1.txt \
-        --port /dev/ttyUSB0 --baud 9600
+        --port /dev/ttyUSB0 --baud 115200
 
 `--target`/`-t` is one of: f280049, f28379_cpu1, f28379_cpu2.
 """
@@ -369,7 +369,7 @@ def main(argv=None):
     parser.add_argument("--bank0-file", "-b0", help="bank 0 SCI-8 boot-format file (with --target f280049)")
     parser.add_argument("--bank1-file", "-b1", help="bank 1 SCI-8 boot-format file (with --target f280049)")
     parser.add_argument("--port", "-p", default="/dev/ttyACM0", help="serial device (default /dev/ttyACM0)")
-    parser.add_argument("--baud", "-b", type=int, default=38400, help="baud rate (default 38400)")
+    parser.add_argument("--baud", "-b", type=int, default=115200, help="baud rate (default 115200)")
     parser.add_argument("--lib", "-l", default=None, help="path to libiic_ota.so (default: auto-detect)")
     args = parser.parse_args(argv)
 
@@ -377,8 +377,8 @@ def main(argv=None):
 
     if target == "f280049":
 
-        retrieve_firmware_version(args.port, 115200)
-        send_live_update_trigger(args.port, 115200)
+        retrieve_firmware_version(args.port, args.baud)
+        send_live_update_trigger(args.port, args.baud)
         time.sleep(0.01)  # give the device a moment to switch to live update mode
 
         if not args.bank0_file or not args.bank1_file:
