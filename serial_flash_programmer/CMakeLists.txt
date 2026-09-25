@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.7.2 FATAL_ERROR)
 
 set(CMAKE_SYSTEM_VERSION 10.0.15063.0 CACHE STRING "" FORCE)
 
-project(serial_flash_programmer CXX)
+project(serial_flash_programmer C CXX)
 
 #################################################################################
 ## Set target arch type if empty. Visual studio solution generator provides it.
@@ -214,7 +214,7 @@ if(BUILD_IIC_OTA_LIB)
     endif()
 
     add_library(iic_ota ${IIC_OTA_LIB_TYPE}
-        "source/iic_ota.cpp"
+        "source/iic_ota.c"
         "include/iic_ota.h"
     )
 

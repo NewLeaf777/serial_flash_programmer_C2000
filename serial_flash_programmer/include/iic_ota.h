@@ -34,7 +34,7 @@ extern "C"
 	// the device itself picks the bank (see below). These are the public
 	// API selector values only -- they are distinct from (and never sent
 	// as) the SCI wire-protocol command codes; the mapping from
-	// f28379_target_t to a wire command is internal to iic_ota.cpp.
+	// f28379_target_t to a wire command is internal to iic_ota.c.
 	//
 	//*************************************************************************
 	typedef enum

@@ -23,7 +23,7 @@ one per device family:
 It reimplements the same wire protocol as `serial_flash_programmer`'s interactive
 "8-Live DFU" menu item, standalone: no global state, no code shared with the CLI, and
 every wait is timeout-bounded (it never hangs the caller). See `include/iic_ota.h` for
-the full API doc comments and `source/iic_ota.cpp` for the implementation.
+the full API doc comments and `source/iic_ota.c` for the implementation (plain C99/GNU11, no C++ runtime needed).
 
 **Assumptions / limitations, read before use:**
 - The target's SCI flash kernel must already be running and autobaud-ready on the
@@ -81,26 +81,25 @@ make -f Makefile.am62x shared     # only build-am62x/libiic_ota.so
 make -f Makefile.am62x clean
 ```
 
-Requires `aarch64-linux-gnu-g++` and `aarch64-linux-gnu-ar` on `$PATH` (Ubuntu:
-`apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu`). Output goes to `build-am62x/`. Check it
+Requires `aarch64-linux-gnu-gcc` and `aarch64-linux-gnu-ar` on `$PATH` (Ubuntu:
+`apt install gcc-aarch64-linux-gnu`). Output goes to `build-am62x/`. Check it
 with `file build-am62x/libiic_ota.so` (expect `ELF 64-bit ... ARM aarch64`).
 
 To use a different toolchain, override the variables on the command line (or in the environment):
 
 ```bash
-make -f Makefile.am62x CXX=aarch64-none-linux-gnu-g++ AR=aarch64-none-linux-gnu-ar
+make -f Makefile.am62x CC=aarch64-none-linux-gnu-gcc AR=aarch64-none-linux-gnu-ar
 ```
 
-`CXXFLAGS` (default `-std=c++11 -O2 -Wall -Wextra -fPIC`) and `BUILD_DIR` can be overridden the
+`CFLAGS` (default `-std=gnu11 -O2 -Wall -Wextra -fPIC`) and `BUILD_DIR` can be overridden the
 same way.
 
 **glibc compatibility:** a library built with Ubuntu's cross toolchain links against Ubuntu's glibc.
-Current Ubuntu releases pull in `__isoc23_fscanf@GLIBC_2.38` (from the `fscanf` in `source/iic_ota.cpp`),
-so the `.so` will not load on a board with an older glibc (for example a kirkstone-based image, glibc
-2.35). Check the requirement with
-`aarch64-linux-gnu-objdump -T build-am62x/libiic_ota.so | grep GLIBC_` and compare it with
-`ldd --version` on the board. If the board is older, build with the Yocto recipe below instead, which
-compiles against the image's own libraries.
+The library needs only the baseline aarch64 glibc symbols (`GLIBC_2.17`), because `-std=gnu11` avoids
+the glibc 2.38 `__isoc23_fscanf` redirect that the older C++ build had. Check the requirement with
+`aarch64-linux-gnu-objdump -T build-am62x/libiic_ota.so | grep GLIBC_` and compare the highest version
+with `ldd --version` on the board. If the board is older than that, build with the Yocto recipe below
+instead, which compiles against the image's own libraries.
 
 ### Building with Yocto (`yocto/iic-ota_git.bb`)
 
@@ -183,13 +182,11 @@ transferred — the device tells `iic_ota_f280049()` which one after the command
 ```bash
 gcc -o my_app my_app.c \
     -Iserial_flash_programmer/include \
-    serial_flash_programmer/build/libiic_ota.a \
-    -lstdc++
+    serial_flash_programmer/build/libiic_ota.a
 ```
 
-(`-lstdc++` is needed because `iic_ota.cpp` is compiled as C++ internally; the
-public API in `iic_ota.h` is plain C, wrapped in `extern "C"`, so it's callable
-from a C or C++ program.)
+(`iic_ota.c` is plain C, so no `-lstdc++` is needed. The header is wrapped in `extern "C"`, so the
+library is also callable from C++ programs.)
 
 ### Compiling against the shared library
 

@@ -4,24 +4,24 @@
 #   cd serial_flash_programmer
 #   make -f Makefile.am62x
 #
-# Override CXX/AR to point at a different aarch64 toolchain if needed, e.g.:
-#   make -f Makefile.am62x CXX=aarch64-none-linux-gnu-g++ AR=aarch64-none-linux-gnu-ar
+# Override CC/AR to point at a different aarch64 toolchain if needed, e.g.:
+#   make -f Makefile.am62x CC=aarch64-none-linux-gnu-gcc AR=aarch64-none-linux-gnu-ar
 
-# CXX/AR default to plain g++/ar in Make's built-in rules, so a plain
+# CC/AR default to plain cc/ar in Make's built-in rules, so a plain
 # "?=" here would never take effect (their origin is "default", not
-# "undefined"). Only override that built-in default, so CXX=.../AR=...
+# "undefined"). Only override that built-in default, so CC=.../AR=...
 # on the command line or in the environment still wins.
-ifeq ($(origin CXX),default)
-CXX := aarch64-linux-gnu-g++
+ifeq ($(origin CC),default)
+CC := aarch64-linux-gnu-gcc
 endif
 ifeq ($(origin AR),default)
 AR := aarch64-linux-gnu-ar
 endif
 
-CXXFLAGS  ?= -std=c++11 -O2 -Wall -Wextra -fPIC
+CFLAGS    ?= -std=gnu11 -O2 -Wall -Wextra -fPIC
 BUILD_DIR ?= build-am62x
 
-SRC        := source/iic_ota.cpp
+SRC        := source/iic_ota.c
 OBJ        := $(BUILD_DIR)/iic_ota.o
 STATIC_LIB := $(BUILD_DIR)/libiic_ota.a
 SHARED_LIB := $(BUILD_DIR)/libiic_ota.so
@@ -37,13 +37,13 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(OBJ): $(SRC) include/iic_ota.h | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Iinclude -c $(SRC) -o $(OBJ)
+	$(CC) $(CFLAGS) -Iinclude -c $(SRC) -o $(OBJ)
 
 $(STATIC_LIB): $(OBJ)
 	$(AR) rcs $(STATIC_LIB) $(OBJ)
 
 $(SHARED_LIB): $(OBJ)
-	$(CXX) $(CXXFLAGS) -shared -o $(SHARED_LIB) $(OBJ)
+	$(CC) $(CFLAGS) -shared -o $(SHARED_LIB) $(OBJ)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -11,12 +11,12 @@ PV = "1.0+git${SRCPV}"
 S = "${WORKDIR}/git"
 B = "${S}/serial_flash_programmer"
 
-# Makefile.am62x keeps CXX/AR from the environment (Yocto's cross toolchain) and
-# uses "?=" for CXXFLAGS, so the -std/-fPIC it needs are passed explicitly.
-# LDFLAGS is appended because the Makefile's shared-library link line only uses CXXFLAGS.
+# Makefile.am62x keeps CC/AR from the environment (Yocto's cross toolchain) and
+# uses "?=" for CFLAGS, so the -std/-fPIC it needs are passed explicitly.
+# LDFLAGS is appended because the Makefile's shared-library link line only uses CFLAGS.
 do_compile() {
     oe_runmake -C ${B} -f Makefile.am62x \
-        CXXFLAGS="${CXXFLAGS} -std=c++11 -fPIC ${LDFLAGS}"
+        CFLAGS="${CFLAGS} -std=gnu11 -fPIC ${LDFLAGS}"
 }
 
 do_install() {

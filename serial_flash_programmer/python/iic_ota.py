@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Python ctypes wrapper for the iic_ota_f28379() / iic_ota_f280049() C API
-(../include/iic_ota.h, ../source/iic_ota.cpp).
+(../include/iic_ota.h, ../source/iic_ota.c).
 
 This calls into libiic_ota.so, so the library must be built as a shared
 object first:
