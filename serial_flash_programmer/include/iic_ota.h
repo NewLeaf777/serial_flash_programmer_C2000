@@ -72,7 +72,15 @@ extern "C"
 	//
 	// Sequence: open and configure the serial port -> autobaud lock -> send
 	// the target-specific Live DFU command packet -> stream firmware_file
-	// using the SCI-8 ASCII boot-format checksum protocol -> close the port.
+	// using the SCI-8 ASCII boot-format checksum protocol -> send the 8-byte
+	// forward-exit magic (0xDE 0xAD 0xBE 0xEF 0xFE 0xED 0xFA 0xCE) -> close
+	// the port.
+	//
+	// The F280049 forwards this traffic to the F28379 over 16-bit SPI, so
+	// every byte is sent in pairs: autobaud is 'A','A' (both echoed back),
+	// and each checksum handshake receives LSB+MSB before ACKing with
+	// 0x2D,0x2D. The exit magic makes the F280049 leave traffic-forward
+	// mode. It is sent on success and on every failure after autobaud.
 	//
 	// Params:
 	//   target        - which CPU core to update (see f28379_target_t).

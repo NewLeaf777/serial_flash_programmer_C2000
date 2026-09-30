@@ -53,6 +53,19 @@ static const uint16_t kF280049LiveDfuCommand = 0x0700;
 // 16-bit words transmitted between device-checksum handshakes.
 static const unsigned int kBlockSizeWords = 0x80;
 
+// F28379 Live DFU traffic does not reach the F28379 directly: the F280049
+// forwards it over SPI with a 16-bit data width, so a lone byte from the
+// host never completes an SPI word and stalls in the forwarder. Everything
+// iic_ota_f28379() sends is therefore written in byte pairs (see
+// write_pair()). Once the transfer is over, this 8-byte (4 SPI word)
+// sequence tells the F280049 to leave traffic-forward mode and resume
+// normal protocol processing. It deliberately avoids every byte value the
+// protocol already assigns a meaning to (0x2D ACK, 0xA5 NAK, 0xE4/0x1B
+// packet framing, 0xAA/0x08 SCI-8 key, 0xB0/0xB1 bank select, 'A'
+// autobaud). The F280049 firmware must match these exact bytes, in this
+// order, and must not forward them to the F28379.
+static const uint8_t kForwardExitMagic[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xFA, 0xCE};
+
 // Host-side patience. These are new values -- not part of the wire
 // protocol -- chosen to be generous for low-baud SCI transfers while
 // still guaranteeing iic_ota_f28379()/iic_ota_f280049() eventually
@@ -186,6 +199,14 @@ static int write_byte(int fd, uint8_t b)
 	return write_all(fd, &b, 1);
 }
 
+// Writes two bytes in a single write() -- one 16-bit SPI word once the
+// F280049 forwards it to the F28379.
+static int write_pair(int fd, uint8_t b0, uint8_t b1)
+{
+	uint8_t buf[2] = {b0, b1};
+	return write_all(fd, buf, 2);
+}
+
 static void flush_port(int fd)
 {
 	tcflush(fd, TCIOFLUSH);
@@ -272,6 +293,46 @@ static int autobaud_lock(int fd, int timeout_ms)
 		return -1;
 	}
 	return (echoByte == 'A') ? 0 : -1;
+}
+
+//*************************************************************************
+// Paired variant of autobaud_lock() for the F28379 behind the F280049 SPI
+// forwarder: write 'A','A' as one pair and require both echoed back.
+//*************************************************************************
+static int autobaud_lock_paired(int fd, int timeout_ms)
+{
+	flush_port(fd);
+	if (write_pair(fd, 'A', 'A') != 0)
+	{
+		return -1;
+	}
+	for (int i = 0; i < 2; i++)
+	{
+		uint8_t echoByte;
+		if (read_byte_timeout(fd, &echoByte, timeout_ms) != 0)
+		{
+			return -1;
+		}
+		if (echoByte != 'A')
+		{
+			return -1;
+		}
+	}
+	return 0;
+}
+
+//*************************************************************************
+// Sends kForwardExitMagic so the F280049 leaves traffic-forward mode, then
+// waits for it to actually leave the UART -- flush_port()'s TCIOFLUSH
+// would otherwise discard any of it still sitting in the output queue.
+//*************************************************************************
+static int send_forward_exit(int fd)
+{
+	if (write_all(fd, kForwardExitMagic, sizeof(kForwardExitMagic)) != 0)
+	{
+		return -1;
+	}
+	return (tcdrain(fd) == 0) ? 0 : -1;
 }
 
 //*************************************************************************
@@ -371,6 +432,37 @@ static int recv_ack_checksum_word(int fd, uint16_t *out, int timeout_ms)
 }
 
 //*************************************************************************
+// Paired variant of recv_ack_checksum_word(): receive both checksum bytes
+// first, then ACK them together as one pair. The F28379 kernel must send
+// LSB and MSB back-to-back before waiting for the two ACKs.
+//*************************************************************************
+static int recv_checksum_word_paired(int fd, uint16_t *out, int timeout_ms)
+{
+	uint8_t lsb, msb;
+	if (read_byte_timeout(fd, &lsb, timeout_ms) != 0)
+	{
+		return -1;
+	}
+	if (read_byte_timeout(fd, &msb, timeout_ms) != 0)
+	{
+		return -1;
+	}
+	if (write_pair(fd, kAck, kAck) != 0)
+	{
+		return -1;
+	}
+	*out = ((uint16_t)(lsb | (msb << 8)));
+	return 0;
+}
+
+// Dispatches to the paired or byte-at-a-time checksum handshake.
+static int recv_checksum_word(int fd, uint16_t *out, int timeout_ms, bool paired)
+{
+	return paired ? recv_checksum_word_paired(fd, out, timeout_ms)
+				  : recv_ack_checksum_word(fd, out, timeout_ms);
+}
+
+//*************************************************************************
 // Reentrant reimplementation of loadProgram_checksum()
 // (source/f021_DownloadImage.cpp:115-431): streams an SCI-8 ASCII
 // boot-format file to the device in blocks, with a running (never
@@ -379,8 +471,26 @@ static int recv_ack_checksum_word(int fd, uint16_t *out, int timeout_ms)
 // size. Every mismatch/format/timeout path returns
 // IIC_OTA_ERR_IMAGE_TRANSFER or IIC_OTA_ERR_IMAGE_FORMAT instead of
 // busy-hanging forever.
+//
+// With `paired` set (F28379 behind the F280049 SPI forwarder), every
+// write goes out as a byte pair and checksum handshakes use
+// recv_checksum_word_paired(). With it clear, the bytes on the wire are
+// identical to the original byte-at-a-time loader.
 //*************************************************************************
-static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
+static int send_byte_pair(int fd, uint8_t b0, uint8_t b1, bool paired)
+{
+	if (paired)
+	{
+		return write_pair(fd, b0, b1);
+	}
+	if (write_byte(fd, b0) != 0)
+	{
+		return -1;
+	}
+	return write_byte(fd, b1);
+}
+
+static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms, bool paired)
 {
 	// Skip the single leading control byte (0x02) that precedes the
 	// ASCII hex boot data in SCI-8 files, e.g.:
@@ -406,23 +516,24 @@ static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
 
 	uint32_t checksum = 0; // running sum, compared mod 65536, never reset -- matches the original.
 
-	// First 22 bytes are initialization data.
-	for (int i = 0; i < 22; i++)
+	// First 22 bytes are initialization data -- sent as 11 byte pairs.
+	for (int i = 0; i < 22; i += 2)
 	{
-		uint8_t b;
-		if (read_hex_byte(fh, &b) != 0)
+		uint8_t b0, b1;
+		if (read_hex_byte(fh, &b0) != 0 || read_hex_byte(fh, &b1) != 0)
 		{
 			return IIC_OTA_ERR_IMAGE_FORMAT;
 		}
-		if (write_byte(fd, b) != 0)
+		if (send_byte_pair(fd, b0, b1, paired) != 0)
 		{
 			return IIC_OTA_ERR_IMAGE_TRANSFER;
 		}
-		checksum += b;
+		checksum += b0;
+		checksum += b1;
 	}
 
 	uint16_t rcv;
-	if (recv_ack_checksum_word(fd, &rcv, byte_timeout_ms) != 0)
+	if (recv_checksum_word(fd, &rcv, byte_timeout_ms, paired) != 0)
 	{
 		return IIC_OTA_ERR_IMAGE_TRANSFER;
 	}
@@ -443,15 +554,11 @@ static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
 		unsigned int blockSize = ((unsigned int)(sizeLsb)) |
 								  (((unsigned int)(sizeMsb)) << 8);
 
-		if (write_byte(fd, sizeLsb) != 0)
+		if (send_byte_pair(fd, sizeLsb, sizeMsb, paired) != 0)
 		{
 			return IIC_OTA_ERR_IMAGE_TRANSFER;
 		}
 		checksum += sizeLsb;
-		if (write_byte(fd, sizeMsb) != 0)
-		{
-			return IIC_OTA_ERR_IMAGE_TRANSFER;
-		}
 		checksum += sizeMsb;
 
 		if (blockSize == 0x0000)
@@ -467,13 +574,14 @@ static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
 				return IIC_OTA_ERR_IMAGE_FORMAT;
 			}
 		}
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < 4; i += 2)
 		{
-			if (write_byte(fd, addr[i]) != 0)
+			if (send_byte_pair(fd, addr[i], addr[i + 1], paired) != 0)
 			{
 				return IIC_OTA_ERR_IMAGE_TRANSFER;
 			}
 			checksum += addr[i];
+			checksum += addr[i + 1];
 		}
 
 		for (unsigned int j = 0; j < blockSize; j++)
@@ -481,7 +589,7 @@ static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
 			if ((j % kBlockSizeWords == 0) && (j > 0))
 			{
 				uint16_t blkChecksum;
-				if (recv_ack_checksum_word(fd, &blkChecksum, byte_timeout_ms) != 0)
+				if (recv_checksum_word(fd, &blkChecksum, byte_timeout_ms, paired) != 0)
 				{
 					return IIC_OTA_ERR_IMAGE_TRANSFER;
 				}
@@ -492,30 +600,21 @@ static int download_image_checksum(int fd, FILE *fh, int byte_timeout_ms)
 			}
 
 			uint8_t wLsb, wMsb;
-			if (read_hex_byte(fh, &wLsb) != 0)
+			if (read_hex_byte(fh, &wLsb) != 0 || read_hex_byte(fh, &wMsb) != 0)
 			{
 				return IIC_OTA_ERR_IMAGE_FORMAT;
 			}
-			if (write_byte(fd, wLsb) != 0)
+			if (send_byte_pair(fd, wLsb, wMsb, paired) != 0)
 			{
 				return IIC_OTA_ERR_IMAGE_TRANSFER;
 			}
 			checksum += wLsb;
-
-			if (read_hex_byte(fh, &wMsb) != 0)
-			{
-				return IIC_OTA_ERR_IMAGE_FORMAT;
-			}
-			if (write_byte(fd, wMsb) != 0)
-			{
-				return IIC_OTA_ERR_IMAGE_TRANSFER;
-			}
 			checksum += wMsb;
 		}
 
 		// Unconditional end-of-block checksum handshake.
 		uint16_t blkChecksum;
-		if (recv_ack_checksum_word(fd, &blkChecksum, byte_timeout_ms) != 0)
+		if (recv_checksum_word(fd, &blkChecksum, byte_timeout_ms, paired) != 0)
 		{
 			return IIC_OTA_ERR_IMAGE_TRANSFER;
 		}
@@ -572,7 +671,7 @@ int iic_ota_f28379(f28379_target_t target, const char *firmware_file, const char
 	flush_port(fd);
 	usleep(6 * 1000);
 
-	if (autobaud_lock(fd, kAutobaudTimeoutMs) != 0)
+	if (autobaud_lock_paired(fd, kAutobaudTimeoutMs) != 0)
 	{
 		close(fd);
 		fclose(fh);
@@ -580,32 +679,38 @@ int iic_ota_f28379(f28379_target_t target, const char *firmware_file, const char
 	}
 
 	// Live DFU command packet -- always length=0/data=NULL, matching case 8.
+	// 10 bytes, so it is already an even number of bytes for the SPI forwarder.
 	uint8_t packet[16];
 	uint32_t packetLength = construct_packet(packet, command, 0, NULL);
 
 	// Matches the Sleep(500) preceding f021_SendPacket() in case 8.
 	usleep(500 * 1000);
 
+	int result;
 	bool nak = false;
 	if (send_packet_and_wait_ack(fd, packet, packetLength, kCommandAckTimeoutMs, &nak) != 0)
 	{
-		close(fd);
-		fclose(fh);
-		return IIC_OTA_ERR_COMMAND_TIMEOUT;
+		result = IIC_OTA_ERR_COMMAND_TIMEOUT;
 	}
-	if (nak)
+	else if (nak)
 	{
-		close(fd);
-		fclose(fh);
-		return IIC_OTA_ERR_COMMAND_NAK;
+		result = IIC_OTA_ERR_COMMAND_NAK;
+	}
+	else
+	{
+		// Matches the Sleep(500) preceding f021_DownloadImage() in case 8.
+		usleep(500 * 1000);
+
+		flush_port(fd);
+		result = download_image_checksum(fd, fh, kByteTimeoutMs, true);
 	}
 
-	// Matches the Sleep(500) preceding f021_DownloadImage() in case 8.
-	usleep(500 * 1000);
-
-	flush_port(fd);
-	
-	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
+	// Release the F280049 from traffic-forward mode on success AND on
+	// failure, so it can process the normal protocol again (e.g. a retrigger
+	// of LFU mode). Best effort: a failure here never masks `result`.
+	// send_forward_exit() drains the output queue, so the final flush can
+	// no longer discard the tail of the image or the magic bytes.
+	send_forward_exit(fd);
 
 	//Wait for the last two bytes to go out on the wire.
 	usleep(1 * 1000);
@@ -727,7 +832,7 @@ int iic_ota_f280049(const char *bank0_firmware_file, const char *bank1_firmware_
 	usleep(500 * 1000);
 
 	flush_port(fd);
-	int result = download_image_checksum(fd, fh, kByteTimeoutMs);
+	int result = download_image_checksum(fd, fh, kByteTimeoutMs, false);
 	
 	//Wait for the last two bytes to go out on the wire.
 	usleep(1 * 1000);

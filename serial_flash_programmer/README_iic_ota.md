@@ -35,6 +35,30 @@ the full API doc comments and `source/iic_ota.c` for the implementation (plain C
 - `firmware_file` (and `bank0_firmware_file`/`bank1_firmware_file`) must be ASCII
   SCI-8 boot format, i.e. the output of `hex2000 -boot -a -sci8 app.out -o app.txt`.
 
+### F28379 via F280049 SPI forwarding
+
+On this board the F28379 is not on the UART directly: the F280049 forwards all
+`iic_ota_f28379()` traffic to it over SPI with a **16-bit** data width. So
+`iic_ota_f28379()` only ever sends bytes in pairs (one SPI word per pair).
+`iic_ota_f280049()` is unaffected and keeps its byte-at-a-time protocol. For F28379
+this differs from the stock kernel protocol in these ways, and the device firmware must
+match:
+
+| Step | Host sends | Host expects |
+|------|------------|--------------|
+| Autobaud | `'A' 'A'` | both echoed: `'A' 'A'` |
+| Command packet | 10-byte packet (already even) | `0x2D` ACK |
+| Image data | init bytes, block sizes, addresses, data words — all as byte pairs | — |
+| Checksum handshake | `0x2D 0x2D` **after** receiving both checksum bytes | checksum LSB and MSB back-to-back (the F28379 kernel must no longer wait for an ACK between them) |
+| Exit forward mode | `0xDE 0xAD 0xBE 0xEF 0xFE 0xED 0xFA 0xCE` | — |
+
+The 8 exit-magic bytes are sent once the transfer ends: on success, and also on any
+failure after autobaud succeeded (command NAK/timeout, image format/transfer error). This
+means the F280049 always returns to normal protocol processing. The F280049 firmware must
+detect exactly this sequence in the forwarded stream and **not** forward it to the F28379.
+None of these bytes has a meaning elsewhere in the protocol (`0x2D`/`0xA5`, `0xE4`/`0x1B`,
+`0xAA`/`0x08`, `0xB0`/`0xB1`, `'A'`).
+
 
 ## Building
 
